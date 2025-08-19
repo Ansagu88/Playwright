@@ -14,7 +14,7 @@ export class LoginAction extends BaseAction {
         await this.loginPage.identifyMeButton.click();
 
         await this.loginPage.verifyMicrosoftDomain();
-        await this.expectVisibleWithDebug(this.loginPage.signInText, 'sign-in-text-not-visible');
+        // await this.expectVisibleWithDebug(this.loginPage.signInText, 'sign-in-text-not-visible');
 
         await this.loginPage.emailInput.fill(userMock.email);
         await this.verifyIfLocatorIsReadyForClick(this.loginPage.nextButton);

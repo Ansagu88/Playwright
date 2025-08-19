@@ -16,39 +16,33 @@ export type RequestMock = {
   tipoServicios: string;
   descripcion: string;
   fecha: string; // ISO date
-  attachments: string[];
 };
 
 const UNIDAD_OPTIONS = [
-  'Unidad A',
-  'Unidad B',
-  'Unidad C',
+  'Andaychagua',
+  'Chungar',
+  'Lima',
 ];
 
 const AREA_OPTIONS = [
-  'Area Comercial',
-  'Area Técnica',
-  'Area Administrativa',
+  'Geologia',
+  'Planta',
+  'TICA',
 ];
 
 const SOCIEDAD_OPTIONS = [
-  'Sociedad X',
-  'Sociedad Y',
-  'Sociedad Z',
+  'Cerro de Pasco',
+  'Chungar',
+  'Volcan',
 ];
 
 const TIPO_SERVICIOS_OPTIONS = [
-  'Mantenimiento',
-  'Instalación',
-  'Consultoría',
+  'Con destaque - Con trabajos en interior mina',
+  'Con destaque - Con trabajos solo en superficie',
+  'Sin destaque - Gabinete',
 ];
 
-// Three example files that exist under tests/fixtures/files
-const ATTACHMENT_FILES = [
-  'tests/fixtures/files/Test_File_PDF.pdf',
-  'tests/fixtures/files/Test_File_Excel.xlsx',
-  'tests/fixtures/files/Image_test_JPG.jpg',
-];
+
 
 /**
  * Returns an ISO date string `daysAhead` days in the future (no time part).
@@ -87,7 +81,7 @@ export function createRequestMock(opts?: Partial<RequestMock> & { counter?: numb
 
   const fecha = opts?.fecha ?? futureDateISO(7 + (counter % 10)); // between 7 and 16 days ahead
 
-  const attachments = opts?.attachments ?? ATTACHMENT_FILES.slice(0, 3);
+
 
   return {
     unidad,
@@ -96,7 +90,6 @@ export function createRequestMock(opts?: Partial<RequestMock> & { counter?: numb
     tipoServicios,
     descripcion,
     fecha,
-    attachments,
   };
 }
 

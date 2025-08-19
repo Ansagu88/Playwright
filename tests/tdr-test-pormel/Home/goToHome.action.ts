@@ -10,10 +10,10 @@ export class GoToHomeAction extends BaseAction{
         await AuthUtils.ensureLoggedIn(this.page);
 
         //Verify that the "Inicio" menu's is visible
-        await this.verifyIfLocatorIsVisible(this.homePage.menuItemHome);
+        await this.verifyIfLocatorIsVisible(this.homePage.homeImage);
 
         //Click in "Inicio"
-        await this.homePage.menuItemHome.click();
+        await this.homePage.homeImage.click();
 
         //Verify that the "Inicio" image is visible
         await this.verifyIfLocatorIsVisible(this.homePage.homeImage);
