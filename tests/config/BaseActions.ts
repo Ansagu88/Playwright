@@ -27,11 +27,11 @@ export class BaseAction {
         await expect(locator).toBeChecked({ timeout: 30_000 });
     }
 
-    // protected async verifyIfLocatorIsReadyForClick(locator: Locator) {
-    //     await expect(locator).toBeVisible({ timeout: 30_000 });
-    //     await expect(locator).toBeEnabled({ timeout: 30_000 });
-    //     await locator.click({ trial: true });
-    // }
+    protected async verifyIfLocatorIsReadyForClick(locator: Locator) {
+        await expect(locator).toBeVisible({ timeout: 30_000 });
+        await expect(locator).toBeEnabled({ timeout: 30_000 });
+        await locator.click({ trial: true });
+    }
 
     protected async waitForSuccessfulResponseAfterAction(
         urlPart: string,
@@ -114,14 +114,14 @@ export class BaseAction {
         );
     }
     
-    // protected async expectVisibleWithDebug(locator: Locator, debugLabel: string) {
-    //     try {
-    //         await expect(locator).toBeVisible({ timeout: 30_000 });
-    //     } catch (error) {
-    //         await this.printVisibleContent(debugLabel);
-    //         throw error;
-    //     }
-    // }
+    protected async expectVisibleWithDebug(locator: Locator, debugLabel: string) {
+        try {
+            await expect(locator).toBeVisible({ timeout: 30_000 });
+        } catch (error) {
+            await this.printVisibleContent(debugLabel);
+            throw error;
+        }
+    }
 
     protected async printVisibleContent(debugLabel: string) {
         // Defensive: avoid reading page when closed
