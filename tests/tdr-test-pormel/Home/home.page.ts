@@ -2,7 +2,7 @@ import { BasePage } from "../../config/BasePage";
 
 export class HomePage extends BasePage {
     homeImage = this.page.getByRole('img', { name: 'Volcan Logo' });
-    requestList = this.page.getByText('Mis Solicitudes');
+    requestList = this.page.getByTestId("AssignmentOutlinedIcon");
     approvals = this.page.getByText('Mis Aprobaciones');
     menuBookIcon = this.page.getByTestId('MenuBookOutlinedIcon');
     notificationBtn = this.page.getByTestId('notificatioBtn');
@@ -16,4 +16,3 @@ export class HomePage extends BasePage {
     userEmail = this.page.getByText('Usuario de Aplicacionesadminqa@pormel.net');
 
 };
-   
