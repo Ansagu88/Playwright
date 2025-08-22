@@ -19,6 +19,23 @@ export class NewRequestAction extends BaseAction {
     await this.verifyIfLocatorIsVisible(rp.newRequestButton);
     await rp.newRequestButton.click();
 
+    // Debug: save screenshot and modal html for inspection (helps identify dropdown structure)
+    const saveDebug = async (name: string) => {
+      try {
+        const fs = require('fs');
+        const path = require('path');
+        const outDir = path.resolve(process.cwd(), 'playwright-artifacts');
+        if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+        const pngPath = path.join(outDir, `${name}.png`);
+        const htmlPath = path.join(outDir, `${name}.html`);
+        await this.page.screenshot({ path: pngPath, fullPage: false }).catch(()=>{});
+        const content = await this.page.content();
+        fs.writeFileSync(htmlPath, content, { encoding: 'utf8' });
+      } catch (e) { /* ignore debug errors */ }
+    };
+
+    await saveDebug('new-request-modal-opened');
+
     // Robust selector: mock-first, fallback to choosing a random visible option in the UI
     // Also handles native <select> and custom dropdowns and waits for dependent selects to update.
     const selectWithFallback = async (
@@ -148,10 +165,44 @@ export class NewRequestAction extends BaseAction {
     };
 
     // Select in order and wait for dependent updates
-    const unidadSelected = await selectWithFallback(['Unidad'], mock.unidad, 'Area', 7000);
-    const areaSelected = await selectWithFallback(['Area', 'Área'], mock.area, 'Sociedad', 7000);
-    const sociedadSelected = await selectWithFallback(['Sociedad'], mock.sociedad, 'Tipo de servicio', 7000);
-    const tipoSelected = await selectWithFallback(['Tipo de servicio', 'Tipo de Servicios', 'Tipo de solicitud'], mock.tipoServicios, undefined, 7000);
+    const selectMuiSelectByLabel = async (labelText: string, desired?: string, waitForChild?: string, timeout = 5000): Promise<string|null> => {
+      try {
+        const labelEl = this.page.locator(`label:has-text("${labelText}")`).first();
+        if (await labelEl.count() === 0) return null;
+        const container = labelEl.locator('..').first();
+        const cb = container.locator('[role="combobox"]').first();
+        if (await cb.count() === 0) return null;
+        await cb.scrollIntoViewIfNeeded();
+        await cb.click({ force: true }).catch(() => {});
+        await this.page.waitForTimeout(150);
+        let options = this.page.locator('[role="option"]');
+        const texts: string[] = [];
+        for (let i = 0; i < await options.count(); i++) {
+          const t = (await options.nth(i).innerText()).trim(); if (t && !/select|elegir|--/i.test(t)) texts.push(t);
+        }
+        if (texts.length === 0) {
+          const alt = this.page.locator('.v-list-item, .dropdown-item, li').filter({ hasText: /./ });
+          for (let i = 0; i < await alt.count(); i++) { const t = (await alt.nth(i).innerText()).trim(); if (t && !/select|elegir|--/i.test(t)) texts.push(t); }
+        }
+        if (texts.length === 0) { await this.page.keyboard.press('Escape').catch(()=>{}); return null; }
+        let pick: string | null = null;
+        if (desired && texts.includes(desired)) pick = desired;
+        else pick = texts[Math.floor(Math.random() * texts.length)];
+        const optByRole = this.page.getByRole('option', { name: pick || '' }).first();
+        if (await optByRole.count() > 0) { await optByRole.click({ force: true }).catch(()=>{}); }
+        else {
+          for (let i = 0; i < await options.count(); i++) { const t = (await options.nth(i).innerText()).trim(); if (t === pick) { await options.nth(i).click({ force: true }).catch(()=>{}); break; } }
+        }
+        if (waitForChild) await this.page.waitForTimeout(400);
+        console.log(`[NewRequestAction] selected (mui) '${pick}' for '${labelText}'`);
+        return pick;
+      } catch (e) { return null; }
+    };
+
+    const unidadSelected = await selectMuiSelectByLabel('Unidad', mock.unidad, 'Area', 7000) || await selectWithFallback(['Unidad'], mock.unidad, 'Area', 7000);
+    const areaSelected = await selectMuiSelectByLabel('Área', mock.area, 'Sociedad', 7000) || await selectWithFallback(['Area','Área'], mock.area, 'Sociedad', 7000);
+    const sociedadSelected = await selectMuiSelectByLabel('Sociedad', mock.sociedad, 'Tipo de servicio', 7000) || await selectWithFallback(['Sociedad'], mock.sociedad, 'Tipo de servicio', 7000);
+    const tipoSelected = await selectMuiSelectByLabel('Tipo de servicio', mock.tipoServicios, undefined, 7000) || await selectWithFallback(['Tipo de servicio','Tipo de Servicios','Tipo de solicitud'], mock.tipoServicios, undefined, 7000);
 
     console.log(`[NewRequestAction] selections -> unidad:${unidadSelected} area:${areaSelected} sociedad:${sociedadSelected} tipo:${tipoSelected}`);
 
@@ -167,6 +218,9 @@ export class NewRequestAction extends BaseAction {
 
     // Date
     try { const dateInput = this.page.locator('input[type="date"]'); if (await dateInput.count() > 0) await dateInput.first().fill(mock.fecha); } catch {}
+
+    // Ejecutar guardado de los datos (saveButton)
+    await this.page.getByRole('button', { name: 'Guardar' }).first().click().catch(() => {});
 
     // Upload 3 random files
     const files: string[] = [];
