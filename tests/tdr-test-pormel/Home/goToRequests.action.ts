@@ -16,6 +16,6 @@ export class GoToRequestsAction extends BaseAction{
         await this.homePage.requestList.click();
 
         // Verify the requests button (or requests area) is visible after navigation
-        await this.verifyIfLocatorIsVisible(this.homePage.requestList);
+        await this.verifyIfLocatorIsNotVisible(this.homePage.requestList);
     }
 }

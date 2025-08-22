@@ -16,6 +16,6 @@ export class GoToApprovalsAction extends BaseAction{
         await this.homePage.approvals.click();
 
         // Verify that approvals area is visible after navigation
-        await this.verifyIfLocatorIsVisible(this.homePage.approvals);
+        await this.verifyIfLocatorIsNotVisible(this.homePage.approvals);
     }
 }

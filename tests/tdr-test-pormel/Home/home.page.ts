@@ -1,7 +1,7 @@
 import { BasePage } from "../../config/BasePage";
 
 export class HomePage extends BasePage {
-    homeImage = this.page.getByRole('img', { name: 'Volcan Logo' });
+    homeImage = this.page.getByAltText('Volcan Logo');
     requestList = this.page.getByTestId("AssignmentOutlinedIcon");
     approvals = this.page.getByText('Mis Aprobaciones');
     menuBookIcon = this.page.getByTestId('MenuBookOutlinedIcon');
@@ -10,8 +10,6 @@ export class HomePage extends BasePage {
     showAllCheckbox = this.page.getByRole('checkbox', { name: 'Mostrar solo no leídas' });
     notificationButton = this.page.locator('div').filter({ hasText: /^NotificacionesMostrar solo no leídas$/ }).getByRole('button');
     settingsIcon = this.page.getByTitle('Configuración').getByRole('img');
-    bookIcon = this.page.locator('.sc-eJfVlx');
-    anotherBookIcon = this.page.locator('.sc-eJfVlx');
     userProfile = this.page.getByTestId('userProfile').getByText('U');
     userEmail = this.page.getByText('Usuario de Aplicacionesadminqa@pormel.net');
 

@@ -6,21 +6,27 @@ export class AuthUtils {
   static async ensureLoggedIn(page: Page) {
     await page.goto(userMock.url);
 
+    // Quick check: if there is an auth/session cookie in the context, assume logged in
     try {
-      const menu = page.getByText('Términos de referencia');
-      const isLoggedIn = await menu.isVisible();
-
-      if (!isLoggedIn) {
-        const loginAction = new LoginAction(page);
-        await loginAction.login();
-      } else {
-        console.log("✅ User is already logged in.");
+      const cookies = await page.context().cookies();
+      const hasAuthCookie = cookies.some(c => c.name.includes('auth') || c.name.includes('session'));
+      if (hasAuthCookie) {
+        console.log('✅ Auth cookie present; assuming logged in.');
+        return;
       }
-    } catch (error) {
-      console.error("❌ Error checking login status:", error);
-      console.log("🔁 Attempting to login as fallback...");
+    } catch (err) {
+      console.warn('⚠️ Could not read cookies for quick auth check:', err);
+      
+    }
+
+    // If we reached here, no auth cookie was found. Perform the login flow directly.
+    try {
+      console.log('ℹ️ No auth cookie detected; running login flow.');
       const loginAction = new LoginAction(page);
       await loginAction.login();
+    } catch (error) {
+      console.error("❌ Error while attempting login fallback:", error);
+      throw error;
     }
   }
 }

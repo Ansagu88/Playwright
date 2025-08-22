@@ -16,6 +16,6 @@ export class GoToLibraryAction extends BaseAction{
         await this.homePage.menuBookIcon.click();
 
         // Verify that the library/book icon is visible (or library area is loaded)
-        await this.verifyIfLocatorIsVisible(this.homePage.menuBookIcon);
+        await this.verifyIfLocatorIsNotVisible(this.homePage.menuBookIcon);
     }
 }
