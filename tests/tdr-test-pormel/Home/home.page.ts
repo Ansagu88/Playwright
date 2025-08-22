@@ -3,7 +3,7 @@ import { BasePage } from "../../config/BasePage";
 export class HomePage extends BasePage {
     homeImage = this.page.getByAltText('Volcan Logo');
     requestList = this.page.getByTestId("AssignmentOutlinedIcon");
-    approvals = this.page.getByText('Mis Aprobaciones');
+    approvals = this.page.getByTestId('HowToRegOutlinedIcon');
     menuBookIcon = this.page.getByTestId('MenuBookOutlinedIcon');
     notificationBtn = this.page.getByTestId('notificatioBtn');
     showUnreadCheckbox = this.page.getByRole('checkbox', { name: 'Mostrar solo no leídas' });
@@ -14,3 +14,5 @@ export class HomePage extends BasePage {
     userEmail = this.page.getByText('Usuario de Aplicacionesadminqa@pormel.net');
 
 };
+
+

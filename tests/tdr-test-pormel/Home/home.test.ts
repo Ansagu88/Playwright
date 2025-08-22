@@ -30,3 +30,24 @@ test('go to library test', async ({ page }) => {
   await goToLibrary.navigateToLibrary();
   await page.waitForTimeout(5000); // espera 5 segundos en la página de library
 });
+
+test('navigate test', async ({ page }) => {
+  
+  const goToHomeAction = new GoToHomeAction(page);
+  const goToRequestsAction = new GoToRequestsAction(page);
+  const goToApprovalsAction = new GoToApprovalsAction(page);
+  const goToLibraryAction = new GoToLibraryAction(page);
+
+  await goToRequestsAction.navigateToRequests();
+  await goToHomeAction.navigateToHome();
+
+  await goToApprovalsAction.navigateToApprovals();
+  await goToHomeAction.navigateToHome();
+  
+  await goToLibraryAction.navigateToLibrary();
+  await goToHomeAction.navigateToHome();
+  
+  await page.waitForTimeout(10000);
+
+
+});

@@ -56,7 +56,5 @@ export class LoginAction extends BaseAction {
             console.warn("⚠️ Prompt 'Stay signed in?' no apareció o fue salteado.", e);
             await this.printVisibleContent('staySignedIn-not-visible');        
         }
-
-        // await this.expectVisibleWithDebug(await this.loginPage.usernameText, 'username-not-visible');
     }
 }

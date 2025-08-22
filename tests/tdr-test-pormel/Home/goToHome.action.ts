@@ -17,6 +17,6 @@ export class GoToHomeAction extends BaseAction{
 
         //Verify that the "Inicio" image is visible
         // await this.verifyIfLocatorIsVisible(this.homePage.homeImage);
-        await this.page.waitForTimeout(10000);
+        await this.page.waitForTimeout(5000);
     }
 }

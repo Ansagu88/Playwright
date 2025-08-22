@@ -1,13 +1,5 @@
 import { faker } from "@faker-js/faker"
-// Mock generator for a request used in tests
-// Fields:
-// - unidad: one of three options
-// - area: selected from a list
-// - sociedad: selected from a list
-// - tipoServicios: selected from a list
-// - descripcion: string that includes a test counter
-// - fecha: future date (ISO string)
-// - attachments: array of relative file paths inside tests/fixtures/files
+
 
 export type RequestMock = {
   unidad: string;
@@ -22,12 +14,13 @@ const UNIDAD_OPTIONS = [
   'Andaychagua',
   'Chungar',
   'Lima',
+  'Santi',
 ];
 
 const AREA_OPTIONS = [
   'Geologia',
   'Planta',
-  'TICA',
+  'Tica',
 ];
 
 const SOCIEDAD_OPTIONS = [
@@ -40,6 +33,7 @@ const TIPO_SERVICIOS_OPTIONS = [
   'Con destaque - Con trabajos en interior mina',
   'Con destaque - Con trabajos solo en superficie',
   'Sin destaque - Gabinete',
+  'Sin destaque - Reparaciones u otras actuaciones fuera de la Unidad',
 ];
 
 
