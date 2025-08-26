@@ -1,42 +1,11 @@
-import { faker } from "@faker-js/faker"
-
-
 export type RequestMock = {
   unidad: string;
   area: string;
   sociedad: string;
   tipoServicios: string;
   descripcion: string;
-  fecha: string; // ISO date
+  fecha: string; // ISO date yyyy-mm-dd
 };
-
-const UNIDAD_OPTIONS = [
-  'Andaychagua',
-  'Chungar',
-  'Lima',
-  'Santi',
-];
-
-const AREA_OPTIONS = [
-  'Geologia',
-  'Planta',
-  'Tica',
-];
-
-const SOCIEDAD_OPTIONS = [
-  'Cerro de Pasco',
-  'Chungar',
-  'Volcan',
-];
-
-const TIPO_SERVICIOS_OPTIONS = [
-  'Con destaque - Con trabajos en interior mina',
-  'Con destaque - Con trabajos solo en superficie',
-  'Sin destaque - Gabinete',
-  'Sin destaque - Reparaciones u otras actuaciones fuera de la Unidad',
-];
-
-
 
 /**
  * Returns an ISO date string `daysAhead` days in the future (no time part).
@@ -44,7 +13,6 @@ const TIPO_SERVICIOS_OPTIONS = [
 function futureDateISO(daysAhead = 7): string {
   const d = new Date();
   d.setDate(d.getDate() + daysAhead);
-  // keep only date part (yyyy-mm-dd)
   const yyyy = d.getFullYear();
   const mm = String(d.getMonth() + 1).padStart(2, '0');
   const dd = String(d.getDate()).padStart(2, '0');
@@ -52,42 +20,21 @@ function futureDateISO(daysAhead = 7): string {
 }
 
 /**
- * Create a deterministic but unique-ish counter when none provided.
+ * Simplified deterministic mock generator. Returns a fixed set of values
+ * that match the fields on the modal UI. This removes randomness so we can
+ * test selection strategies one by one.
  */
-function defaultCounter(): number {
-  // Use epoch seconds modulo a large number so tests show different values each run
-  return Math.floor(Date.now() / 1000) % 1000000;
-}
-
-/**
- * Generate a request mock object.
- * @param opts optional overrides
- */
-export function createRequestMock(opts?: Partial<RequestMock> & { counter?: number }): RequestMock {
-  const counter = opts?.counter ?? defaultCounter();
-
-  const unidad = opts?.unidad ?? UNIDAD_OPTIONS[counter % UNIDAD_OPTIONS.length];
-  const area = opts?.area ?? AREA_OPTIONS[(counter + 1) % AREA_OPTIONS.length];
-  const sociedad = opts?.sociedad ?? SOCIEDAD_OPTIONS[(counter + 2) % SOCIEDAD_OPTIONS.length];
-  const tipoServicios = opts?.tipoServicios ?? TIPO_SERVICIOS_OPTIONS[(counter + 3) % TIPO_SERVICIOS_OPTIONS.length];
-
-  const descripcion = opts?.descripcion ?? `${faker.lorem.sentence()} - Test automático - contador #${counter}`;
-
-  const fecha = opts?.fecha ?? futureDateISO(7 + (counter % 10)); // between 7 and 16 days ahead
-
-
-
+export function createRequestMock(opts?: Partial<RequestMock>): RequestMock {
   return {
-    unidad,
-    area,
-    sociedad,
-    tipoServicios,
-    descripcion,
-    fecha,
+    unidad: opts?.unidad ?? 'Lima',
+    area: opts?.area ?? 'Planta',
+    sociedad: opts?.sociedad ?? 'Volcan',
+    tipoServicios: opts?.tipoServicios ?? 'Sin destaque - Gabinete',
+    descripcion: opts?.descripcion ?? 'Descripción de prueba - creación automática',
+    fecha: opts?.fecha ?? futureDateISO(7),
   };
 }
 
-// Export a ready-to-use mock instance
 export const requestMock = createRequestMock();
 
 export default requestMock;

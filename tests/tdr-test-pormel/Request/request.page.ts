@@ -12,7 +12,7 @@ export class RequestPage extends BasePage {
   filterButton = this.page.locator('xpath=//*[@id="root"]/div/div/main/div/div/div/div/div[1]/div[2]/button[1]');
   volcanButtonHome = this.page.getByRole('img', { name: 'Volcan Logo' });
   searchRequest = this.page.getByRole('textbox', { name: 'Buscar por identificador de' });
-  unidadButton = this.page.getByTestId(':rs:');
+  unidadButton = this.page.getByTestId('unityId');
   areaButton = this.page.getByTestId(':ru:');
   sociedadButton = this.page.getByTestId(':r10:');
   tipoServicioButton = this.page.getByTestId(':r12:');
@@ -24,6 +24,7 @@ export class RequestPage extends BasePage {
   applyButton = this.page.getByRole('button', { name: 'Aplicar' });
   clearButton = this.page.getByRole('button', { name: 'Limpiar' });
   datePicker = this.page.getByTestId('datepicker-icon');
+  nextMonthPicker = this.page.getByTestId('ArrowRightIcon');
 
 }
 
