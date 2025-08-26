@@ -102,9 +102,58 @@ export class NewRequestAction extends BaseAction {
             if (t && !/select|elegir|--/i.test(t)) texts.push(t);
           }
           if (texts.length === 0) {
-            const alt = this.page.locator('.v-list-item, .dropdown-item, li').filter({ hasText: /./ });
+            // Fallback 1: look for list-like items but only inside the select's container
+            // to avoid picking unrelated global list items (e.g. breadcrumbs).
+            const alt = container.locator('.v-list-item, .dropdown-item, li, a').filter({ hasText: /./ });
             for (let i = 0; i < await alt.count(); i++) {
               const t = (await alt.nth(i).innerText()).trim(); if (t && !/select|elegir|--/i.test(t)) texts.push(t);
+            }
+          }
+
+          // Fallback 2: if still empty, search common popper/menu roots appended to body
+          if (texts.length === 0) {
+            const popperRoots = this.page.locator('.MuiPopover-root, .MuiPopper-root, .MuiMenu-paper, .MuiAutocomplete-popper, div[role="presentation"], .MuiMenu-list, .MuiList-root');
+            for (let r = 0; r < await popperRoots.count(); r++) {
+              const root = popperRoots.nth(r);
+              try {
+                const cand = root.locator('[role="option"], [role="menuitem"], li, a').filter({ hasText: /./ });
+                for (let j = 0; j < await cand.count(); j++) {
+                  const t = (await cand.nth(j).innerText()).trim(); if (t && !/select|elegir|--/i.test(t)) texts.push(t);
+                }
+              } catch {}
+              if (texts.length > 0) break;
+            }
+          }
+
+          // Fallback 3: quick reopen/retry loop - sometimes options are populated after an extra click
+          if (texts.length === 0) {
+            for (let retry = 0; retry < 3 && texts.length === 0; retry++) {
+              try { await cb.click({ force: true }).catch(() => {}); } catch {}
+              await this.page.waitForTimeout(150 + retry * 100);
+              // try panel by aria-controls again
+              try {
+                const panelId = await cb.getAttribute('aria-controls').catch(() => null);
+                if (panelId) {
+                  const panel = this.page.locator(`xpath=//*[@id="${panelId}"]`);
+                  const opts = panel.locator('[role="option"]').filter({ hasText: /./ });
+                  for (let k = 0; k < await opts.count(); k++) {
+                    const t = (await opts.nth(k).innerText()).trim(); if (t && !/select|elegir|--/i.test(t)) texts.push(t);
+                  }
+                }
+              } catch {}
+              if (texts.length > 0) break;
+              // re-scan popper roots
+              const popperRoots2 = this.page.locator('.MuiPopover-root, .MuiPopper-root, .MuiMenu-paper, .MuiAutocomplete-popper, div[role="presentation"], .MuiMenu-list, .MuiList-root');
+              for (let r = 0; r < await popperRoots2.count(); r++) {
+                const root = popperRoots2.nth(r);
+                try {
+                  const cand = root.locator('[role="option"], [role="menuitem"], li, a').filter({ hasText: /./ });
+                  for (let j = 0; j < await cand.count(); j++) {
+                    const t = (await cand.nth(j).innerText()).trim(); if (t && !/select|elegir|--/i.test(t)) texts.push(t);
+                  }
+                } catch {}
+                if (texts.length > 0) break;
+              }
             }
           }
 
@@ -374,9 +423,7 @@ export class NewRequestAction extends BaseAction {
       }
     } catch (e) { console.warn('[NewRequestAction] datepicker interaction error', e); }
 
-  // Wait 10s and verify fields before uploading files
-    await this.page.waitForTimeout(10_000);
-
+  // Instead of a fixed 10s wait, wait for each field to stabilize with a bounded polling loop.
     const verifyField = async (labelText: string, expected: string | null): Promise<boolean> => {
       if (!expected) return false;
       try {
@@ -395,15 +442,36 @@ export class NewRequestAction extends BaseAction {
       }
     };
 
-    const unidadOk = await verifyField('Unidad', unidadSelected);
-    const areaOk = await verifyField('Área', areaSelected);
-    const sociedadOk = await verifyField('Sociedad', sociedadSelected);
-    const tipoOk = await verifyField('Tipo de servicio', tipoSelected);
+    const waitForFieldReady = async (labelText: string, expected: string | null, timeoutMs = 7000): Promise<boolean> => {
+      if (!expected) return false;
+      const start = Date.now();
+      while (Date.now() - start < timeoutMs) {
+        try {
+          if (await verifyField(labelText, expected)) return true;
+        } catch {}
+        await this.page.waitForTimeout(200);
+      }
+      return false;
+    };
+
+    const unidadOk = await waitForFieldReady('Unidad', unidadSelected, 7000);
+    const areaOk = await waitForFieldReady('Área', areaSelected, 7000);
+    const sociedadOk = await waitForFieldReady('Sociedad', sociedadSelected, 7000);
+    const tipoOk = await waitForFieldReady('Tipo de servicio', tipoSelected, 7000);
     let descOk = false;
     try {
       const descEl = this.page.getByLabel('Descripción').first();
-      if (await descEl.count() > 0) descOk = (await descEl.inputValue()).trim() === mock.descripcion;
-      else descOk = (await this.page.getByText(mock.descripcion).count()) > 0;
+      if (await descEl.count() > 0) {
+        // wait shortly for the textarea to contain the value we filled
+        const start = Date.now();
+        while (Date.now() - start < 3000) {
+          const val = (await descEl.inputValue()).trim();
+          if (val === mock.descripcion) { descOk = true; break; }
+          await this.page.waitForTimeout(150);
+        }
+      } else {
+        descOk = (await this.page.getByText(mock.descripcion).count()) > 0;
+      }
     } catch { descOk = false; }
 
     try {
@@ -468,13 +536,34 @@ export class NewRequestAction extends BaseAction {
       const fi = this.page.locator('input[type="file"]');
       console.log('[NewRequestAction] file input count before upload:', await fi.count());
       if (await fi.count() > 0) {
+        const first = fi.first();
         try {
-          await fi.first().setInputFiles(files);
+          // Try to enable multiple attribute via JS if the input doesn't have it.
+          const hasMultiple = await first.getAttribute('multiple');
+          if (!hasMultiple) {
+            try {
+              const eh = await first.elementHandle();
+              if (eh) {
+                try {
+                  await eh.evaluate((el: any) => { (el as HTMLInputElement).multiple = true; });
+                  console.log('[NewRequestAction] temporarily set multiple=true on file input');
+                } catch {}
+              }
+            } catch (e) { /* ignore */ }
+          }
+
+          await first.setInputFiles(files);
           console.log('[NewRequestAction] setInputFiles succeeded with', files);
         } catch (e) {
-          console.warn('[NewRequestAction] setInputFiles failed, trying per-file', e);
+          console.warn('[NewRequestAction] setInputFiles failed, falling back to per-file upload', e);
+          // Per-file fallback: upload files one by one. Many UIs accept single-file inputs repeatedly.
           for (const f of files) {
-            try { await fi.first().setInputFiles(f); console.log('[NewRequestAction] set single file', f);} catch (err) { console.warn('[NewRequestAction] single setInputFiles failed for', f, err); }
+            try {
+              await first.setInputFiles(f);
+              console.log('[NewRequestAction] set single file', f);
+              // small wait to allow UI to process the uploaded file
+              await this.page.waitForTimeout(400);
+            } catch (err) { console.warn('[NewRequestAction] single setInputFiles failed for', f, err); }
           }
         }
       } else {
