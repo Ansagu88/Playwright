@@ -3,7 +3,7 @@ import { expect } from '@playwright/test';
 import path from 'path';
 import fs from 'fs/promises';
 import { GoToRequestsAction } from '../Home/goToRequests.action';
-import { RequestPage } from './Request.page';
+import { RequestPage } from './request.page';
 
 export class DownloadActiveFormatsAction extends BaseAction {
 

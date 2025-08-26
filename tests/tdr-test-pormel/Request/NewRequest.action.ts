@@ -1,5 +1,5 @@
 import { BaseAction } from "../../config/BaseActions";
-import { RequestPage } from "./Request.page";
+import { RequestPage } from "./request.page";
 import { GoToRequestsAction } from "../Home/goToRequests.action";
 import { createRequestMock, RequestMock } from "../../fixtures/mocks/request.mock";
 import { getRandomFixtureFilePath } from "../../config/FileUtils";

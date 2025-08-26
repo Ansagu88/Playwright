@@ -1,8 +1,8 @@
 import { test, expect } from '@playwright/test';
 import fs from 'fs/promises';
-import { DownloadActiveFormatsAction } from './DownloadActiveFormats.action';
-import { ExportRequestAction } from './ExportRequest.action';
-import { NewRequestAction } from './NewRequest.action';
+import { DownloadActiveFormatsAction } from './downloadActiveFormats.action';
+import { ExportRequestAction } from './exportRequest.action';
+import { NewRequestAction } from './newRequest.action';
 
 test('download active formats should be a zip', async ({ page }) => {
   const action = new DownloadActiveFormatsAction(page);
