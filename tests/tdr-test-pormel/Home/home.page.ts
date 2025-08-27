@@ -1,0 +1,18 @@
+import { BasePage } from "../../config/BasePage";
+
+export class HomePage extends BasePage {
+    homeImage = this.page.getByAltText('Volcan Logo');
+    requestList = this.page.getByTestId("AssignmentOutlinedIcon");
+    approvals = this.page.getByTestId('HowToRegOutlinedIcon');
+    menuBookIcon = this.page.getByTestId('MenuBookOutlinedIcon');
+    notificationBtn = this.page.getByTestId('notificatioBtn');
+    showUnreadCheckbox = this.page.getByRole('checkbox', { name: 'Mostrar solo no leídas' });
+    showAllCheckbox = this.page.getByRole('checkbox', { name: 'Mostrar solo no leídas' });
+    notificationButton = this.page.locator('div').filter({ hasText: /^NotificacionesMostrar solo no leídas$/ }).getByRole('button');
+    settingsIcon = this.page.getByTitle('Configuración').getByRole('img');
+    userProfile = this.page.getByTestId('userProfile').getByText('U');
+    userEmail = this.page.getByText('Usuario de Aplicacionesadminqa@pormel.net');
+
+};
+
+

@@ -1,7 +1,61 @@
+# Environment variables (local secrets)
+# Keep example files like `.env.example` in repo; ignore only actual local env files
+.env
+.env.local
+.env.*.local
 
-# Playwright
+# Node dependencies
 node_modules/
-/test-results/
-/playwright-report/
-/blob-report/
-/playwright/.cache/
+
+# Playwright-generated artifacts (reports, traces, test results)
+test-results/
+playwright-report/
+blob-report/
+trace/
+playwright/.cache/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Coverage
+coverage/
+.nyc_output/
+
+# Build / output
+dist/
+build/
+out/
+
+# TypeScript build info
+*.tsbuildinfo
+
+# Editor directories
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Certificates / keys (don't commit private keys)
+*.pem
+*.key
+*.crt
+
+# Optional: ignore Playwright recordings/artifacts that may be large
+# Uncomment if you don't want traces/videos checked in
+# playwright-video/
+# playwright-trace/
+
+# Keep this file in repository so that a new developer cloning the repo
+# will not miss essential files. This gitignore only hides local/derived artifacts.
