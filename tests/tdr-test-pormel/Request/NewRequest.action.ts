@@ -6,6 +6,141 @@ import { getRandomFixtureFilePath } from "../../config/FileUtils";
 import { expect } from "@playwright/test";
 
 export class NewRequestAction extends BaseAction {
+  // Helper: guarda artefactos de depuración
+  private async saveDebug(name: string) {
+    try {
+      const fs = require('fs');
+      const path = require('path');
+      const outDir = path.resolve(process.cwd(), 'playwright-artifacts');
+      if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+      const pngPath = path.join(outDir, `${name}.png`);
+      const htmlPath = path.join(outDir, `${name}.html`);
+      await this.page.screenshot({ path: pngPath, fullPage: false }).catch(()=>{});
+      const content = await this.page.content();
+      fs.writeFileSync(htmlPath, content, { encoding: 'utf8' });
+    } catch {}
+  }
+
+  // Helper: espera a que un botón de guardado esté habilitado y lo clickea
+  private async clickFinalSave(expectDescription: string, timeoutMs = 20000) {
+    const startUrl = this.page.url();
+    const labelPattern = /(Guardar|Crear|Aceptar|Save)/i;
+    const hardDeadline = Date.now() + timeoutMs;
+
+    const primaryWrapper = this.page.locator('dfn[title*="Guardar"]').locator('button:has-text("Guardar")').first();
+    const genericButtons = this.page.locator('button').filter({ hasText: labelPattern });
+
+    let targetButton: any = null;
+    const resolveButton = async () => {
+      if (await primaryWrapper.count() > 0) return primaryWrapper;
+      if (await genericButtons.count() > 0) {
+        // prefer last (a menudo el que está en el footer del formulario)
+        return genericButtons.last();
+      }
+      return null;
+    };
+
+    while (Date.now() < hardDeadline) {
+      targetButton = await resolveButton();
+      if (targetButton && await targetButton.count() > 0) {
+        const enabled = await targetButton.evaluate((el: HTMLElement) => !(el as HTMLButtonElement).disabled && !el.getAttribute('aria-disabled'));
+        if (enabled) break;
+      }
+      await this.page.waitForTimeout(300);
+    }
+
+    if (!targetButton || await targetButton.count() === 0) {
+      await this.saveDebug('save-button-not-found');
+      throw new Error('No se encontró ningún botón de guardado');
+    }
+
+    const requestCapture: { url: string; status: number; ok: boolean }[] = [];
+    const listener = (response: any) => {
+      try {
+        const req = response.request();
+        if (req.method() === 'POST' && /(solicitud|request|tdr)/i.test(req.url())) {
+          requestCapture.push({ url: req.url(), status: response.status(), ok: response.ok() });
+        }
+      } catch {}
+    };
+    this.page.on('response', listener);
+
+    console.log('[NewRequestAction] Clic en botón final de guardado');
+    await targetButton.click({ force: true }).catch(()=>{});
+    await this.saveDebug('after-save-click');
+
+    // Esperar una respuesta POST relevante o un cambio de URL o desaparición del heading
+    const waitPromises: Promise<any>[] = [];
+    waitPromises.push(this.page.waitForResponse(r => {
+      const req = r.request();
+      return req.method() === 'POST' && /(solicitud|request|tdr)/i.test(req.url()) && r.status() < 500;
+    }, { timeout: 10000 }).catch(()=>null));
+    waitPromises.push(this.page.waitForURL(url => url.toString() !== startUrl && !/Nueva-solicitud/i.test(url.toString()), { timeout: 10000 }).catch(()=>null));
+    waitPromises.push(this.page.getByRole('heading', { name: /Nueva solicitud/i }).waitFor({ state: 'detached', timeout: 10000 }).catch(()=>null));
+
+    await Promise.race(waitPromises).catch(()=>{});
+
+    // Pequeña espera adicional para finalización de lógica frontend
+    await this.page.waitForTimeout(800);
+
+    this.page.removeListener('response', listener);
+    console.log('[NewRequestAction] Respuestas POST capturadas:', requestCapture);
+
+    // Si seguimos en la página de nueva solicitud, intentar volver a lista.
+    if (/Nueva-solicitud/i.test(this.page.url())) {
+      console.warn('[NewRequestAction] URL sigue en formulario; navegando manualmente a Mis Solicitudes para verificar persistencia');
+      const linkList = this.page.getByRole('link', { name: /Mis Solicitudes/i });
+      if (await linkList.count() > 0) await linkList.first().click().catch(()=>{});
+      else {
+        const btnList = this.page.getByRole('button', { name: /Mis Solicitudes/i });
+        if (await btnList.count() > 0) await btnList.first().click().catch(()=>{});
+      }
+      await this.page.waitForTimeout(1500);
+    }
+
+    // Verificar aparición de la descripción en listado.
+    let found = false;
+    for (let i=0;i<10 && !found;i++) {
+      const loc = this.page.getByText(expectDescription, { exact: false });
+      if (await loc.count() > 0 && await loc.first().isVisible().catch(()=>false)) { found = true; break; }
+      await this.page.waitForTimeout(500);
+    }
+    if (!found) {
+      await this.saveDebug('description-not-found-in-list');
+      console.warn('[NewRequestAction] Descripción no encontrada en listado tras guardado');
+      // Falla dura para que el test no pase falsamente
+      throw new Error('La solicitud no aparece en la lista después de guardar');
+    } else {
+      console.log('[NewRequestAction] Solicitud localizada en la lista');
+    }
+  }
+
+  // Helper: verifica que cada nombre de archivo aparezca en la UI tras la subida
+  private async verifyFilesListed(filePaths: string[], timeoutPerFile = 7000) {
+    for (const fp of filePaths) {
+      const base = require('path').basename(fp);
+      const start = Date.now();
+      let found = false;
+      while (Date.now() - start < timeoutPerFile && !found) {
+        // Candidatos: texto plano, elementos con data-testid relacionada, items de lista
+        const loc = this.page.locator(`text=${base}`);
+        if (await loc.count() > 0 && await loc.first().isVisible().catch(()=>false)) { found = true; break; }
+        // Buscar versiones recortadas (algunos UIs muestran solo parte del nombre)
+        if (base.length > 12) {
+          const partial = base.slice(0, 8);
+          const partialLoc = this.page.locator(`text=${partial}`);
+          if (await partialLoc.count() > 0 && await partialLoc.first().isVisible().catch(()=>false)) { found = true; break; }
+        }
+        await this.page.waitForTimeout(250);
+      }
+      if (!found) {
+        console.warn(`[NewRequestAction] No se localizó visualmente el archivo '${base}' (puede requerir selector específico)`);
+        await this.saveDebug(`missing-file-${base}`);
+      } else {
+        console.log(`[NewRequestAction] Archivo '${base}' visible tras subida`);
+      }
+    }
+  }
   async createRequestWithFiles(overrides?: Partial<RequestMock>): Promise<RequestMock> {
     const mock = createRequestMock({ ...overrides });
 
@@ -20,21 +155,7 @@ export class NewRequestAction extends BaseAction {
     await rp.newRequestButton.click();
 
     // Debug: save screenshot and modal html for inspection (helps identify dropdown structure)
-    const saveDebug = async (name: string) => {
-      try {
-        const fs = require('fs');
-        const path = require('path');
-        const outDir = path.resolve(process.cwd(), 'playwright-artifacts');
-        if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
-        const pngPath = path.join(outDir, `${name}.png`);
-        const htmlPath = path.join(outDir, `${name}.html`);
-        await this.page.screenshot({ path: pngPath, fullPage: false }).catch(()=>{});
-        const content = await this.page.content();
-        fs.writeFileSync(htmlPath, content, { encoding: 'utf8' });
-      } catch (e) { /* ignore debug errors */ }
-    };
-
-    await saveDebug('new-request-modal-opened');
+    await this.saveDebug('new-request-modal-opened');
 
     // We keep only the MUI-specific selection strategy to reduce complexity.
     // The generic fallback selectors were removed because this app uses MUI selects.
@@ -56,7 +177,15 @@ export class NewRequestAction extends BaseAction {
           console.log(`[NewRequestAction] combobox for '${labelText}' aria-controls='${ariaControls}' aria-expanded='${ariaExpanded}'`);
         } catch {}
 
+        // Try clicking the visible combobox; if nothing opens, also try clicking a native/select input inside the container
         await cb.click({ force: true }).catch(() => {});
+        const nativeInput = container.locator('select, input.MuiSelect-nativeInput').first();
+        try {
+          if (await nativeInput.count() > 0) {
+            // click the native input as an alternative open action for some MUI variants
+            await nativeInput.click({ force: true }).catch(() => {});
+          }
+        } catch {}
         // Wait briefly and prefer to detect expansion via aria-expanded (faster & less flaky).
         await this.page.waitForTimeout(40);
         try {
@@ -72,10 +201,15 @@ export class NewRequestAction extends BaseAction {
           await waitExpanded().catch(() => {});
 
           const panelIdQuick = await cb.getAttribute('aria-controls').catch(() => null);
+          const cbId = await cb.getAttribute('id').catch(() => null);
           if (panelIdQuick) {
             // use XPath lookup by id to avoid CSS escaping issues with ids that contain ':'
             const panelQuick = this.page.locator(`xpath=//*[@id="${panelIdQuick}"]`);
             await panelQuick.locator('[role="option"]').first().waitFor({ state: 'visible', timeout: 1500 }).catch(() => {});
+          } else if (cbId) {
+            // some MUI menus reference the combobox via aria-labelledby instead of aria-controls
+            const panelByLabel = this.page.locator(`xpath=//*[@aria-labelledby="${cbId}"]`);
+            await panelByLabel.locator('[role="option"]').first().waitFor({ state: 'visible', timeout: 1500 }).catch(() => {});
           } else {
             await this.page.locator('[role="option"]').first().waitFor({ state: 'visible', timeout: 1500 }).catch(() => {});
           }
@@ -260,7 +394,7 @@ export class NewRequestAction extends BaseAction {
       if (await dp.count() > 0) {
         await dp.first().click().catch(() => {});
         await this.page.waitForTimeout(300);
-        try { await saveDebug('date-picker-opened'); } catch {}
+  try { await this.saveDebug('date-picker-opened'); } catch {}
 
         // Find the calendar header text (e.g. "agosto 2025") inside the open popper
         let popper = this.page.locator('.MuiPickerPopper-paper').first();
@@ -487,112 +621,147 @@ export class NewRequestAction extends BaseAction {
     } else {
       console.log('[NewRequestAction] All fields verified after 10s wait');
     }
-    // Ensure file input is available. Some UIs require an intermediate save/continue
-    // to expose the file uploader. If the input is not present, try clicking a
-    // provisional save/continue button and wait for the input to appear.
-    try {
-      const fileInput = this.page.locator('input[type="file"]');
-      if (await fileInput.count() === 0) {
-  const provisionalButtons = ['Guardar', 'Guardar y continuar', 'Continuar', 'Adjuntar', 'Agregar', 'Agregar archivo', 'Añadir', 'Añadir archivo', 'Save', 'Save and continue'];
-        for (const label of provisionalButtons) {
-          const btn = this.page.getByRole('button', { name: label });
-          if (await btn.count() > 0) {
-            console.log(`[NewRequestAction] clicking provisional button '${label}' to enable uploader`);
-            await btn.first().click().catch(() => {});
-            const start = Date.now();
-            while (Date.now() - start < 5000) {
-              const cnt = await fileInput.count();
-              console.log(`[NewRequestAction] waiting for file input, count=${cnt}`);
-              if (cnt > 0) break;
-              await this.page.waitForTimeout(200);
-            }
-            break;
-          }
-        }
-      }
-    } catch (e) { /* ignore */ }
-    try {
-      // If still no file input, try clicking upload-like buttons explicitly (Agregar/Agregar archivo/Subir...)
-      const fileInput = this.page.locator('input[type="file"]');
-      if (await fileInput.count() === 0) {
-        const uploadButtons = this.page.getByRole('button', { name: /Agregar|Agregar archivo|Añadir|Añadir archivo|Subir archivo|Adjuntar|Upload file/i });
-        if (await uploadButtons.count() > 0) {
-          console.log('[NewRequestAction] clicking upload-like button to reveal file input');
-          await uploadButtons.first().click().catch(() => {});
-          const start = Date.now();
-          while (Date.now() - start < 5000) {
-            const cnt = await fileInput.count();
-            console.log('[NewRequestAction] waiting for file input after upload button, count=', cnt);
-            if (cnt > 0) break;
-            await this.page.waitForTimeout(200);
-          }
-        }
-      }
-    } catch (e) { /* ignore */ }
-    // Upload 3 random files
-    const files: string[] = [];
-    for (let i = 0; i < 3; i++) files.push(getRandomFixtureFilePath());
-    try {
-      const fi = this.page.locator('input[type="file"]');
-      console.log('[NewRequestAction] file input count before upload:', await fi.count());
-      if (await fi.count() > 0) {
-        const first = fi.first();
-        try {
-          // Try to enable multiple attribute via JS if the input doesn't have it.
-          const hasMultiple = await first.getAttribute('multiple');
-          if (!hasMultiple) {
-            try {
-              const eh = await first.elementHandle();
-              if (eh) {
-                try {
-                  await eh.evaluate((el: any) => { (el as HTMLInputElement).multiple = true; });
-                  console.log('[NewRequestAction] temporarily set multiple=true on file input');
-                } catch {}
-              }
-            } catch (e) { /* ignore */ }
-          }
+    // ===== NUEVA LÓGICA DE ADJUNTOS VIA MODAL =====
+    const requiredTypes = ['TDR','BASES','ANEXO'];
+    const includeOptional = Math.random() < 0.5; // 50% opcional
+    const optionalType = 'OTROS';
+    const allPlanned = includeOptional ? [...requiredTypes, optionalType] : [...requiredTypes];
+    const attachedSummary: { tipo: string; file: string; success: boolean }[] = [];
 
-          await first.setInputFiles(files);
-          console.log('[NewRequestAction] setInputFiles succeeded with', files);
-        } catch (e) {
-          console.warn('[NewRequestAction] setInputFiles failed, falling back to per-file upload', e);
-          // Per-file fallback: upload files one by one. Many UIs accept single-file inputs repeatedly.
-          for (const f of files) {
-            try {
-              await first.setInputFiles(f);
-              console.log('[NewRequestAction] set single file', f);
-              // small wait to allow UI to process the uploaded file
-              await this.page.waitForTimeout(400);
-            } catch (err) { console.warn('[NewRequestAction] single setInputFiles failed for', f, err); }
-          }
-        }
-      } else {
-        const up = this.page.getByRole('button', { name: /Subir archivo|Adjuntar|Cargar archivo|Upload file/i });
-        if (await up.count() > 0) {
-          await up.first().click();
-          const after = this.page.locator('input[type="file"]');
-          const start = Date.now();
-          while (Date.now() - start < 5000) {
-            const cnt = await after.count();
-            console.log('[NewRequestAction] file input count after clicking upload button:', cnt);
-            if (cnt > 0) break;
-            await this.page.waitForTimeout(200);
-          }
-          if (await after.count() > 0) {
-            try { await after.first().setInputFiles(files); console.log('[NewRequestAction] setInputFiles after clicking upload button'); } catch (e) { console.warn('[NewRequestAction] setInputFiles after clicking upload button failed', e); }
-          } else {
-            console.warn('[NewRequestAction] no file input found after clicking upload button');
+    const openAttachmentModal = async () => {
+      // Intentar localizar un botón "Agregar" que no sea el primero (usado para abrir la solicitud) o un botón específico de adjuntos.
+      // Estrategia: probar candidatos en orden.
+      const candidates = [
+        this.page.getByRole('button', { name: /Agregar archivo|Adjuntar archivo|Añadir archivo/i }),
+        this.page.getByRole('button', { name: /^Agregar$/ }).nth(1), // segundo "Agregar"
+        this.page.getByRole('button', { name: /^Agregar$/ }).last()
+      ];
+      for (const c of candidates) {
+        if (await c.count() > 0) {
+          await c.first().click().catch(()=>{});
+          // esperar a que aparezca un dialog (combobox dentro de un contenedor modal)
+          for (let i=0;i<15;i++) {
+            const combo = this.page.locator('div[role="combobox"]').last();
+            if (await combo.count() > 0) return true;
+            await this.page.waitForTimeout(150);
           }
         }
       }
-    } catch {}
+      return false;
+    };
 
-    // After files are attached, execute save/submit once.
-    // This centralizes the final submit to happen after upload is complete.
-    for (const n of ['Guardar','Crear','Aceptar','Save']) {
-      const b = this.page.getByRole('button', { name: n });
-      if (await b.count() > 0) { await b.first().click(); break; }
+    const selectAttachmentType = async (tipo: string) => {
+      // Buscar el último combobox visible (modal recién abierto)
+      const combo = this.page.locator('div[role="combobox"]').last();
+      if (await combo.count() === 0) return false;
+      await combo.click({ force: true }).catch(()=>{});
+      // esperar opciones
+      let optionClicked = false;
+      for (let i=0;i<10 && !optionClicked;i++) {
+        const opt = this.page.getByRole('option', { name: new RegExp(`^${tipo}$`, 'i') });
+        if (await opt.count() > 0) {
+          await opt.first().click().catch(()=>{});
+          optionClicked = true;
+          break;
+        }
+        await this.page.waitForTimeout(150);
+      }
+      if (!optionClicked) {
+        // Fallback: buscar texto directo
+        const txt = this.page.getByText(new RegExp(`^${tipo}$`, 'i')).last();
+        if (await txt.count() > 0) { await txt.click().catch(()=>{}); optionClicked = true; }
+      }
+      return optionClicked;
+    };
+
+    const uploadSingleFileInModal = async (filePath: string) => {
+      // Localizar input[type=file] dentro de un label con texto "Subir archivo"
+      const labelBtn = this.page.locator('label:has-text("Subir archivo")').last();
+      if (await labelBtn.count() === 0) {
+        console.warn('[NewRequestAction] No se encontró label "Subir archivo"');
+        return false;
+      }
+      const input = labelBtn.locator('input[type="file"]');
+      if (await input.count() === 0) {
+        console.warn('[NewRequestAction] Input file no presente dentro del label de subida');
+        return false;
+      }
+      try {
+        await input.setInputFiles(filePath);
+        console.log('[NewRequestAction] Archivo asignado al input:', filePath);
+        return true;
+      } catch (e) {
+        console.warn('[NewRequestAction] Falló setInputFiles en modal', e);
+        return false;
+      }
+    };
+
+    const saveAttachmentModal = async () => {
+      // Buscar botón Guardar dentro del modal (el último visible con ese nombre)
+      const btn = this.page.getByRole('button', { name: /^Guardar$/ }).last();
+      if (await btn.count() === 0) return false;
+      // esperar a que esté habilitado
+      for (let i=0;i<20;i++) {
+        const enabled = await btn.first().evaluate((el: HTMLElement)=> !(el as HTMLButtonElement).disabled && !el.getAttribute('aria-disabled'));
+        if (enabled) break;
+        await this.page.waitForTimeout(200);
+      }
+      await btn.first().click().catch(()=>{});
+      // esperar cierre del modal (desaparición de combobox o input file)
+      for (let i=0;i<30;i++) {
+        const stillOpen = await this.page.locator('label:has-text("Subir archivo") input[type="file"]').count();
+        if (stillOpen === 0) return true;
+        await this.page.waitForTimeout(200);
+      }
+      return true; // tolerante
+    };
+
+    for (const tipo of allPlanned) {
+      const filePath = getRandomFixtureFilePath();
+      console.log(`[NewRequestAction] Iniciando adjunto tipo '${tipo}' con archivo '${filePath}'`);
+      const opened = await openAttachmentModal();
+      if (!opened) {
+        console.warn('[NewRequestAction] No se abrió el modal de adjuntos');
+        attachedSummary.push({ tipo, file: filePath, success: false });
+        continue;
+      }
+      const typeSet = await selectAttachmentType(tipo);
+      if (!typeSet) {
+        console.warn(`[NewRequestAction] No se pudo seleccionar tipo '${tipo}'`);
+        await this.saveDebug(`tipo-no-seleccionado-${tipo}`);
+        attachedSummary.push({ tipo, file: filePath, success: false });
+        // intentar cerrar modal presionando ESC
+        await this.page.keyboard.press('Escape').catch(()=>{});
+        continue;
+      }
+      const uploaded = await uploadSingleFileInModal(filePath);
+      if (!uploaded) {
+        console.warn(`[NewRequestAction] Falló subida de archivo para tipo '${tipo}'`);
+        await this.saveDebug(`subida-fallida-${tipo}`);
+        attachedSummary.push({ tipo, file: filePath, success: false });
+        await this.page.keyboard.press('Escape').catch(()=>{});
+        continue;
+      }
+      const saved = await saveAttachmentModal();
+      if (!saved) {
+        console.warn(`[NewRequestAction] No se guardó el adjunto tipo '${tipo}'`);
+        await this.saveDebug(`adjunto-no-guardado-${tipo}`);
+      }
+      attachedSummary.push({ tipo, file: filePath, success: saved });
+      // pequeña espera antes del siguiente
+      await this.page.waitForTimeout(400);
     }
+
+    // Validar que los obligatorios se hayan adjuntado con éxito
+    const missingRequired = requiredTypes.filter(r => !attachedSummary.find(a => a.tipo === r && a.success));
+    if (missingRequired.length > 0) {
+      await this.saveDebug('adjuntos-requeridos-faltantes');
+      throw new Error(`Faltan adjuntar tipos requeridos: ${missingRequired.join(', ')}`);
+    }
+    console.log('[NewRequestAction] Resumen adjuntos:', attachedSummary);
+
+    await this.saveDebug('before-final-save');
+    await this.clickFinalSave(mock.descripcion).catch(err => { throw err; });
 
     await expect(this.page.getByText(mock.descripcion)).toBeVisible({ timeout: 30_000 });
     return mock;
