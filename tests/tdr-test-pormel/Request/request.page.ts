@@ -25,7 +25,8 @@ export class RequestPage extends BasePage {
   clearButton = this.page.getByRole('button', { name: 'Limpiar' });
   datePicker = this.page.getByTestId('datepicker-icon');
   nextMonthPicker = this.page.getByTestId('ArrowRightIcon');
-
+  uploadFileButton = this.page.getByRole('button', { name: 'Agregar' });
+  saveFileButton = this.page.getByRole('button', { name: 'Guardar' });
 }
 
 
