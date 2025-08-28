@@ -7,19 +7,6 @@ import { uploadAttachments } from "./uploadAttachments";
 
 export class NewRequestAction extends BaseAction {
 
-  async saveRequest(expectDescription: string) {
-    const waitPromises: Promise<any>[] = [];
-    waitPromises.push(this.page.waitForResponse(r => {
-      const req = r.request();
-      return req.method() === 'POST' && /(solicitud|request|tdr)/i.test(req.url()) && r.status() < 500;
-    }, { timeout: 10000 }).catch(()=>null));
-    waitPromises.push(this.page.waitForURL(url => url.toString() !== startUrl && !/Nueva-solicitud/i.test(url.toString()), { timeout: 10000 }).catch(()=>null));
-    waitPromises.push(this.page.getByRole('heading', { name: /Nueva solicitud/i }).waitFor({ state: 'detached', timeout: 10000 }).catch(()=>null));
-
-    await Promise.race(waitPromises).catch(()=>{});
-
-  }
-
   async createRequestWithFiles(overrides?: Partial<RequestMock>): Promise<RequestMock> {
     const mock = createRequestMock({ ...overrides });
 
@@ -33,213 +20,47 @@ export class NewRequestAction extends BaseAction {
     await this.verifyIfLocatorIsVisible(rp.newRequestButton);
     await rp.newRequestButton.click();
 
-    // We keep only the MUI-specific selection strategy to reduce complexity.
-    // The generic fallback selectors were removed because this app uses MUI selects.
+    // Esperar a que desaparezcan skeletons básicos (best effort)
+    await this.page.waitForSelector('.MuiSkeleton-root', { state: 'detached', timeout: 12000 }).catch(()=>{});
 
-    // Select in order and wait for dependent updates
-    const selectMuiSelectByLabel = async (labelText: string, desired?: string, waitForChild?: string, timeout = 5000): Promise<string|null> => {
-      try {
-        const labelEl = this.page.locator(`label:has-text("${labelText}")`).first();
-        if (await labelEl.count() === 0) return null;
-        const container = labelEl.locator('..').first();
-        const cb = container.locator('[role="combobox"]').first();
-        if (await cb.count() === 0) return null;
-        await cb.scrollIntoViewIfNeeded();
-
-        // read aria attributes for debugging
-        try {
-          const ariaControls = await cb.getAttribute('aria-controls');
-          const ariaExpanded = await cb.getAttribute('aria-expanded');
-          console.log(`[NewRequestAction] combobox for '${labelText}' aria-controls='${ariaControls}' aria-expanded='${ariaExpanded}'`);
-        } catch {}
-
-        // Try clicking the visible combobox; if nothing opens, also try clicking a native/select input inside the container
-        await cb.click({ force: true }).catch(() => {});
-        const nativeInput = container.locator('select, input.MuiSelect-nativeInput').first();
-        try {
-          if (await nativeInput.count() > 0) {
-            // click the native input as an alternative open action for some MUI variants
-            await nativeInput.click({ force: true }).catch(() => {});
-          }
-        } catch {}
-        // Wait briefly and prefer to detect expansion via aria-expanded (faster & less flaky).
-        await this.page.waitForTimeout(40);
-        try {
-          // wait for aria-expanded to flip to true (common on MUI selects)
-          const waitExpanded = async () => {
-            for (let i = 0; i < 10; i++) {
-              const ariaExpanded = await cb.getAttribute('aria-expanded').catch(() => null);
-              if (ariaExpanded === 'true') return true;
-              await this.page.waitForTimeout(50);
-            }
-            return false;
-          };
-          await waitExpanded().catch(() => {});
-
-          const panelIdQuick = await cb.getAttribute('aria-controls').catch(() => null);
-          const cbId = await cb.getAttribute('id').catch(() => null);
-          if (panelIdQuick) {
-            // use XPath lookup by id to avoid CSS escaping issues with ids that contain ':'
-            const panelQuick = this.page.locator(`xpath=//*[@id="${panelIdQuick}"]`);
-            await panelQuick.locator('[role="option"]').first().waitFor({ state: 'visible', timeout: 1500 }).catch(() => {});
-          } else if (cbId) {
-            // some MUI menus reference the combobox via aria-labelledby instead of aria-controls
-            const panelByLabel = this.page.locator(`xpath=//*[@aria-labelledby="${cbId}"]`);
-            await panelByLabel.locator('[role="option"]').first().waitFor({ state: 'visible', timeout: 1500 }).catch(() => {});
-          } else {
-            await this.page.locator('[role="option"]').first().waitFor({ state: 'visible', timeout: 1500 }).catch(() => {});
-          }
-        } catch {}
-
-        const pickAttempt = async (): Promise<string | null> => {
-          // prefer to search inside the panel referenced by aria-controls if present
-          let options = this.page.locator('[role="option"]');
-          let panel: any = null;
-          try {
-            const panelId = await cb.getAttribute('aria-controls');
-            if (panelId) {
-              panel = this.page.locator(`xpath=//*[@id="${panelId}"]`);
-              if (await panel.count() > 0) {
-                options = panel.locator('[role="option"]');
-              }
-            }
-          } catch {}
-
-          const texts: string[] = [];
-          const count = await options.count();
-          for (let i = 0; i < count; i++) {
-            const t = (await options.nth(i).innerText()).trim();
-            if (t && !/select|elegir|--/i.test(t)) texts.push(t);
-          }
-          if (texts.length === 0) {
-            // Fallback 1: look for list-like items but only inside the select's container
-            // to avoid picking unrelated global list items (e.g. breadcrumbs).
-            const alt = container.locator('.v-list-item, .dropdown-item, li, a').filter({ hasText: /./ });
-            for (let i = 0; i < await alt.count(); i++) {
-              const t = (await alt.nth(i).innerText()).trim(); if (t && !/select|elegir|--/i.test(t)) texts.push(t);
-            }
-          }
-
-          // Fallback 2: if still empty, search common popper/menu roots appended to body
-          if (texts.length === 0) {
-            const popperRoots = this.page.locator('.MuiPopover-root, .MuiPopper-root, .MuiMenu-paper, .MuiAutocomplete-popper, div[role="presentation"], .MuiMenu-list, .MuiList-root');
-            for (let r = 0; r < await popperRoots.count(); r++) {
-              const root = popperRoots.nth(r);
-              try {
-                const cand = root.locator('[role="option"], [role="menuitem"], li, a').filter({ hasText: /./ });
-                for (let j = 0; j < await cand.count(); j++) {
-                  const t = (await cand.nth(j).innerText()).trim(); if (t && !/select|elegir|--/i.test(t)) texts.push(t);
-                }
-              } catch {}
-              if (texts.length > 0) break;
-            }
-          }
-
-          // Fallback 3: quick reopen/retry loop - sometimes options are populated after an extra click
-          if (texts.length === 0) {
-            for (let retry = 0; retry < 3 && texts.length === 0; retry++) {
-              try { await cb.click({ force: true }).catch(() => {}); } catch {}
-              await this.page.waitForTimeout(150 + retry * 100);
-              // try panel by aria-controls again
-              try {
-                const panelId = await cb.getAttribute('aria-controls').catch(() => null);
-                if (panelId) {
-                  const panel = this.page.locator(`xpath=//*[@id="${panelId}"]`);
-                  const opts = panel.locator('[role="option"]').filter({ hasText: /./ });
-                  for (let k = 0; k < await opts.count(); k++) {
-                    const t = (await opts.nth(k).innerText()).trim(); if (t && !/select|elegir|--/i.test(t)) texts.push(t);
-                  }
-                }
-              } catch {}
-              if (texts.length > 0) break;
-              // re-scan popper roots
-              const popperRoots2 = this.page.locator('.MuiPopover-root, .MuiPopper-root, .MuiMenu-paper, .MuiAutocomplete-popper, div[role="presentation"], .MuiMenu-list, .MuiList-root');
-              for (let r = 0; r < await popperRoots2.count(); r++) {
-                const root = popperRoots2.nth(r);
-                try {
-                  const cand = root.locator('[role="option"], [role="menuitem"], li, a').filter({ hasText: /./ });
-                  for (let j = 0; j < await cand.count(); j++) {
-                    const t = (await cand.nth(j).innerText()).trim(); if (t && !/select|elegir|--/i.test(t)) texts.push(t);
-                  }
-                } catch {}
-                if (texts.length > 0) break;
-              }
-            }
-          }
-
-          console.log(`[NewRequestAction] options for '${labelText}': ${JSON.stringify(texts.slice(0, 20))}`);
-
-          if (texts.length === 0) { await this.page.keyboard.press('Escape').catch(()=>{}); return null; }
-          let pick: string | null = null;
-          if (desired && texts.includes(desired)) pick = desired;
-          else pick = texts[Math.floor(Math.random() * texts.length)];
-
-          // prefer scoping the role lookup to the panel if available to avoid global matches
-          let optByRole = this.page.getByRole('option', { name: pick || '' }).first();
-          try {
-            if (panel) optByRole = panel.getByRole('option', { name: pick || '' }).first();
-          } catch {}
-          if (await optByRole.count() > 0) { await optByRole.click({ force: true }).catch(()=>{}); }
-          else {
-            for (let i = 0; i < await options.count(); i++) {
-              const t = (await options.nth(i).innerText()).trim(); if (t === pick) { await options.nth(i).click({ force: true }).catch(()=>{}); break; }
-            }
-          }
-          return pick;
-        };
-
-        // Try selection and if desired provided, retry up to 2 times if the combobox value
-        // after selection doesn't contain the desired text.
-        let pick = await pickAttempt();
-        if (desired && pick) {
-          for (let attempt = 0; attempt < 2; attempt++) {
-            await this.page.waitForTimeout(150);
-            const current = (await cb.innerText()).trim();
-            if (current.includes(desired)) break;
-            console.log(`[NewRequestAction] desired '${desired}' not reflected after pick='${pick}' (current='${current}'), retrying (${attempt+1})`);
-            // re-open and try again
-            await cb.click({ force: true }).catch(() => {});
-            await this.page.waitForTimeout(150);
-            pick = await pickAttempt();
-          }
+    const pickFirstOption = async (label: string, childLabel?: string, timeout=8000): Promise<string|null> => {
+      const deadline = Date.now() + timeout;
+      const labelEl = this.page.locator(`label:has-text("${label}")`).first();
+      await labelEl.waitFor({ state: 'visible', timeout }).catch(()=>{});
+      const container = labelEl.locator('..').first();
+      const cb = container.locator('[role="combobox"]').first();
+      if (await cb.count() === 0) return null;
+      let chosen: string|null = null;
+      for (let attempt=0; attempt<4 && !chosen && Date.now()<deadline; attempt++) {
+        await cb.click({ force: true }).catch(()=>{});
+        await this.page.waitForTimeout(80);
+        const opts = this.page.locator('[role="option"]').filter({ hasText: /./ });
+        const count = await opts.count();
+        const texts: string[] = [];
+        for (let i=0;i<Math.min(count,20);i++) {
+          const t = (await opts.nth(i).innerText()).trim();
+            if (t && !/seleccion|elegir|--/i.test(t)) texts.push(t);
         }
-
-        if (waitForChild) {
-          // Wait until the dependent child select has options using locator.waitFor (faster than manual polling).
-          try {
-            const childLabelEl = this.page.locator(`label:has-text("${waitForChild}")`).first();
-            if (await childLabelEl.count() > 0) {
-              const childContainer = childLabelEl.locator('..').first();
-              const childCb = childContainer.locator('[role="combobox"]').first();
-              if (await childCb.count() > 0) {
-                const panelId = await childCb.getAttribute('aria-controls').catch(() => null);
-                if (panelId) {
-                  const panel = this.page.locator(`#${panelId}`);
-                  await panel.locator('[role="option"]').first().waitFor({ state: 'visible', timeout }).catch(() => {});
-                } else {
-                  await childCb.locator('[role="option"]').first().waitFor({ state: 'visible', timeout }).catch(() => {});
-                }
-              } else {
-                // maybe native select
-                const childSelect = childLabelEl.locator('select').first();
-                if (await childSelect.count() > 0) {
-                  await childSelect.locator('option').first().waitFor({ state: 'visible', timeout }).catch(() => {});
-                }
-              }
-            }
-          } catch {}
+        if (texts.length) {
+          chosen = texts[0];
+          const opt = opts.filter({ hasText: new RegExp(`^${texts[0].replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}$`) }).first();
+          await opt.click({ force: true }).catch(()=>{});
+        } else {
+          await this.page.keyboard.press('Escape').catch(()=>{});
+          await this.page.waitForTimeout(100);
         }
-
-        console.log(`[NewRequestAction] selected (mui) '${pick}' for '${labelText}'`);
-        return pick;
-      } catch (e) { console.warn('[NewRequestAction] selectMuiSelectByLabel error', e); return null; }
+      }
+      if (childLabel && chosen) {
+        // pequeño wait para que cargue el hijo
+        await this.page.waitForTimeout(250);
+      }
+      return chosen;
     };
 
-  // Do not pass a 'desired' value so the helper picks a random available option each run.
-  const unidadSelected = await selectMuiSelectByLabel('Unidad', undefined, 'Area', 9000);
-  const areaSelected = await selectMuiSelectByLabel('Área', undefined, 'Sociedad', 9000);
-  const sociedadSelected = await selectMuiSelectByLabel('Sociedad', undefined, 'Tipo de servicio', 9000);
-  const tipoSelected = await selectMuiSelectByLabel('Tipo de servicio', undefined, undefined, 9000);
+    const unidadSelected = await pickFirstOption('Unidad','Área');
+    const areaSelected = await pickFirstOption('Área','Sociedad');
+    const sociedadSelected = await pickFirstOption('Sociedad','Tipo de servicio');
+    const tipoSelected = await pickFirstOption('Tipo de servicio');
 
     console.log(`[NewRequestAction] selections -> unidad:${unidadSelected} area:${areaSelected} sociedad:${sociedadSelected} tipo:${tipoSelected}`);
 
@@ -270,7 +91,7 @@ export class NewRequestAction extends BaseAction {
       if (await dp.count() > 0) {
         await dp.first().click().catch(() => {});
         await this.page.waitForTimeout(300);
-  try { await this.saveDebug('date-picker-opened'); } catch {}
+
 
         // Find the calendar header text (e.g. "agosto 2025") inside the open popper
         let popper = this.page.locator('.MuiPickerPopper-paper').first();
@@ -432,77 +253,14 @@ export class NewRequestAction extends BaseAction {
       }
     } catch (e) { console.warn('[NewRequestAction] datepicker interaction error', e); }
 
-  // Instead of a fixed 10s wait, wait for each field to stabilize with a bounded polling loop.
-    const verifyField = async (labelText: string, expected: string | null): Promise<boolean> => {
-      if (!expected) return false;
-      try {
-        const labelEl = this.page.locator(`label:has-text("${labelText}")`).first();
-        if (await labelEl.count() === 0) return false;
-        const container = labelEl.locator('..').first();
-        const cb = container.locator('[role="combobox"]').first();
-        if (await cb.count() > 0) {
-          const value = (await cb.innerText()).trim();
-          return value.includes(expected);
-        }
-        // fallback: look for the expected text visible on the page
-        return (await this.page.getByText(expected).count()) > 0;
-      } catch (e) {
-        return false;
-      }
-    };
-
-    const waitForFieldReady = async (labelText: string, expected: string | null, timeoutMs = 7000): Promise<boolean> => {
-      if (!expected) return false;
-      const start = Date.now();
-      while (Date.now() - start < timeoutMs) {
-        try {
-          if (await verifyField(labelText, expected)) return true;
-        } catch {}
-        await this.page.waitForTimeout(200);
-      }
-      return false;
-    };
-
-    const unidadOk = await waitForFieldReady('Unidad', unidadSelected, 7000);
-    const areaOk = await waitForFieldReady('Área', areaSelected, 7000);
-    const sociedadOk = await waitForFieldReady('Sociedad', sociedadSelected, 7000);
-    const tipoOk = await waitForFieldReady('Tipo de servicio', tipoSelected, 7000);
-    let descOk = false;
-    try {
-      const descEl = this.page.getByLabel('Descripción').first();
-      if (await descEl.count() > 0) {
-        // wait shortly for the textarea to contain the value we filled
-        const start = Date.now();
-        while (Date.now() - start < 3000) {
-          const val = (await descEl.inputValue()).trim();
-          if (val === mock.descripcion) { descOk = true; break; }
-          await this.page.waitForTimeout(150);
-        }
-      } else {
-        descOk = (await this.page.getByText(mock.descripcion).count()) > 0;
-      }
-    } catch { descOk = false; }
-
-    try {
-      const dateInput = this.page.locator('input[type="date"]').first();
-      if (await dateInput.count() > 0) {
-        const v = await dateInput.inputValue();
-        if (v !== mock.fecha) console.warn('[NewRequestAction] date field value differs', { actual: v, expected: mock.fecha });
-      }
-    } catch {}
-
-    if (!unidadOk || !areaOk || !sociedadOk || !tipoOk || !descOk) {
-      console.warn('[NewRequestAction] Field verification failed', { unidadOk, areaOk, sociedadOk, tipoOk, descOk });
-    } else {
-      console.log('[NewRequestAction] All fields verified after 10s wait');
-    }
+    // (Verificación detallada eliminada para simplificar y acelerar)
     // ===== LÓGICA DE ADJUNTOS VIA HELPER (configurable) =====
     const includeOptional = process.env.INCLUDE_OPTIONAL_ATTACH === '1';
-    try { await this.saveDebug('before-attachments'); } catch {}
+  // (debug antes de adjuntos omitido)
     const { summary: attachedSummary, missingRequired } = await uploadAttachments(this.page, {
       includeOptional,
       pauseBetween: 160,          // ligero throttle para estabilidad
-      saveDebug: (n) => this.saveDebug(n),
+  // no-op saveDebug eliminado
       throwOnMissingRequired: true
     });
     if (missingRequired.length) {
@@ -510,8 +268,22 @@ export class NewRequestAction extends BaseAction {
     }
     console.log('[NewRequestAction] Resumen adjuntos (helper):', attachedSummary);
 
-    await this.saveDebug('before-final-save');
-    await this.clickFinalSave(mock.descripcion).catch(err => { throw err; });
+    // Guardado final directo y mínimo
+    const saveBtn = this.page.locator('dfn[title*="Guardar"] button, button:has-text("Guardar"), button:has-text("Crear")').first();
+    await saveBtn.waitFor({ state: 'visible', timeout: 8000 }).catch(()=>{});
+    if (await saveBtn.count() === 0) throw new Error('Botón Guardar no encontrado');
+    // esperar habilitado rápido (poll corto)
+    for (let i=0;i<40;i++) {
+      const enabled = await saveBtn.evaluate((el:HTMLElement)=>!(el as HTMLButtonElement).disabled && !el.getAttribute('aria-disabled')).catch(()=>false);
+      if (enabled) break;
+      await this.page.waitForTimeout(150);
+    }
+    await saveBtn.click({ force: true }).catch(()=>{});
+    // esperar aparición de descripción o cambio de URL
+    await Promise.race([
+      this.page.getByText(mock.descripcion).first().waitFor({ state: 'visible', timeout: 15000 }).catch(()=>null),
+      this.page.waitForURL(u=>!/Nueva-solicitud/i.test(u.toString()), { timeout: 12000 }).catch(()=>null)
+    ]).catch(()=>{});
 
     await expect(this.page.getByText(mock.descripcion)).toBeVisible({ timeout: 30_000 });
     return mock;
