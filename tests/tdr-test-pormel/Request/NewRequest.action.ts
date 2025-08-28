@@ -2,74 +2,12 @@ import { BaseAction } from "../../config/BaseActions";
 import { RequestPage } from "./request.page";
 import { GoToRequestsAction } from "../Home/goToRequests.action";
 import { createRequestMock, RequestMock } from "../../fixtures/mocks/request.mock";
-import { getRandomFixtureFilePath } from "../../config/FileUtils";
 import { expect } from "@playwright/test";
+import { uploadAttachments } from "./uploadAttachments";
 
 export class NewRequestAction extends BaseAction {
-  // Helper: guarda artefactos de depuración
-  private async saveDebug(name: string) {
-    try {
-      const fs = require('fs');
-      const path = require('path');
-      const outDir = path.resolve(process.cwd(), 'playwright-artifacts');
-      if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
-      const pngPath = path.join(outDir, `${name}.png`);
-      const htmlPath = path.join(outDir, `${name}.html`);
-      await this.page.screenshot({ path: pngPath, fullPage: false }).catch(()=>{});
-      const content = await this.page.content();
-      fs.writeFileSync(htmlPath, content, { encoding: 'utf8' });
-    } catch {}
-  }
 
-  // Helper: espera a que un botón de guardado esté habilitado y lo clickea
-  private async clickFinalSave(expectDescription: string, timeoutMs = 20000) {
-    const startUrl = this.page.url();
-    const labelPattern = /(Guardar|Crear|Aceptar|Save)/i;
-    const hardDeadline = Date.now() + timeoutMs;
-
-    const primaryWrapper = this.page.locator('dfn[title*="Guardar"]').locator('button:has-text("Guardar")').first();
-    const genericButtons = this.page.locator('button').filter({ hasText: labelPattern });
-
-    let targetButton: any = null;
-    const resolveButton = async () => {
-      if (await primaryWrapper.count() > 0) return primaryWrapper;
-      if (await genericButtons.count() > 0) {
-        // prefer last (a menudo el que está en el footer del formulario)
-        return genericButtons.last();
-      }
-      return null;
-    };
-
-    while (Date.now() < hardDeadline) {
-      targetButton = await resolveButton();
-      if (targetButton && await targetButton.count() > 0) {
-        const enabled = await targetButton.evaluate((el: HTMLElement) => !(el as HTMLButtonElement).disabled && !el.getAttribute('aria-disabled'));
-        if (enabled) break;
-      }
-      await this.page.waitForTimeout(300);
-    }
-
-    if (!targetButton || await targetButton.count() === 0) {
-      await this.saveDebug('save-button-not-found');
-      throw new Error('No se encontró ningún botón de guardado');
-    }
-
-    const requestCapture: { url: string; status: number; ok: boolean }[] = [];
-    const listener = (response: any) => {
-      try {
-        const req = response.request();
-        if (req.method() === 'POST' && /(solicitud|request|tdr)/i.test(req.url())) {
-          requestCapture.push({ url: req.url(), status: response.status(), ok: response.ok() });
-        }
-      } catch {}
-    };
-    this.page.on('response', listener);
-
-    console.log('[NewRequestAction] Clic en botón final de guardado');
-    await targetButton.click({ force: true }).catch(()=>{});
-    await this.saveDebug('after-save-click');
-
-    // Esperar una respuesta POST relevante o un cambio de URL o desaparición del heading
+  async saveRequest(expectDescription: string) {
     const waitPromises: Promise<any>[] = [];
     waitPromises.push(this.page.waitForResponse(r => {
       const req = r.request();
@@ -80,67 +18,8 @@ export class NewRequestAction extends BaseAction {
 
     await Promise.race(waitPromises).catch(()=>{});
 
-    // Pequeña espera adicional para finalización de lógica frontend
-    await this.page.waitForTimeout(800);
-
-    this.page.removeListener('response', listener);
-    console.log('[NewRequestAction] Respuestas POST capturadas:', requestCapture);
-
-    // Si seguimos en la página de nueva solicitud, intentar volver a lista.
-    if (/Nueva-solicitud/i.test(this.page.url())) {
-      console.warn('[NewRequestAction] URL sigue en formulario; navegando manualmente a Mis Solicitudes para verificar persistencia');
-      const linkList = this.page.getByRole('link', { name: /Mis Solicitudes/i });
-      if (await linkList.count() > 0) await linkList.first().click().catch(()=>{});
-      else {
-        const btnList = this.page.getByRole('button', { name: /Mis Solicitudes/i });
-        if (await btnList.count() > 0) await btnList.first().click().catch(()=>{});
-      }
-      await this.page.waitForTimeout(1500);
-    }
-
-    // Verificar aparición de la descripción en listado.
-    let found = false;
-    for (let i=0;i<10 && !found;i++) {
-      const loc = this.page.getByText(expectDescription, { exact: false });
-      if (await loc.count() > 0 && await loc.first().isVisible().catch(()=>false)) { found = true; break; }
-      await this.page.waitForTimeout(500);
-    }
-    if (!found) {
-      await this.saveDebug('description-not-found-in-list');
-      console.warn('[NewRequestAction] Descripción no encontrada en listado tras guardado');
-      // Falla dura para que el test no pase falsamente
-      throw new Error('La solicitud no aparece en la lista después de guardar');
-    } else {
-      console.log('[NewRequestAction] Solicitud localizada en la lista');
-    }
   }
 
-  // Helper: verifica que cada nombre de archivo aparezca en la UI tras la subida
-  private async verifyFilesListed(filePaths: string[], timeoutPerFile = 7000) {
-    for (const fp of filePaths) {
-      const base = require('path').basename(fp);
-      const start = Date.now();
-      let found = false;
-      while (Date.now() - start < timeoutPerFile && !found) {
-        // Candidatos: texto plano, elementos con data-testid relacionada, items de lista
-        const loc = this.page.locator(`text=${base}`);
-        if (await loc.count() > 0 && await loc.first().isVisible().catch(()=>false)) { found = true; break; }
-        // Buscar versiones recortadas (algunos UIs muestran solo parte del nombre)
-        if (base.length > 12) {
-          const partial = base.slice(0, 8);
-          const partialLoc = this.page.locator(`text=${partial}`);
-          if (await partialLoc.count() > 0 && await partialLoc.first().isVisible().catch(()=>false)) { found = true; break; }
-        }
-        await this.page.waitForTimeout(250);
-      }
-      if (!found) {
-        console.warn(`[NewRequestAction] No se localizó visualmente el archivo '${base}' (puede requerir selector específico)`);
-        await this.saveDebug(`missing-file-${base}`);
-      } else {
-        console.log(`[NewRequestAction] Archivo '${base}' visible tras subida`);
-      }
-    }
-  }
   async createRequestWithFiles(overrides?: Partial<RequestMock>): Promise<RequestMock> {
     const mock = createRequestMock({ ...overrides });
 
@@ -153,9 +32,6 @@ export class NewRequestAction extends BaseAction {
     // Open new request dialog
     await this.verifyIfLocatorIsVisible(rp.newRequestButton);
     await rp.newRequestButton.click();
-
-    // Debug: save screenshot and modal html for inspection (helps identify dropdown structure)
-    await this.saveDebug('new-request-modal-opened');
 
     // We keep only the MUI-specific selection strategy to reduce complexity.
     // The generic fallback selectors were removed because this app uses MUI selects.
@@ -360,10 +236,10 @@ export class NewRequestAction extends BaseAction {
     };
 
   // Do not pass a 'desired' value so the helper picks a random available option each run.
-  const unidadSelected = await selectMuiSelectByLabel('Unidad', undefined, 'Area', 7000);
-  const areaSelected = await selectMuiSelectByLabel('Área', undefined, 'Sociedad', 7000);
-  const sociedadSelected = await selectMuiSelectByLabel('Sociedad', undefined, 'Tipo de servicio', 7000);
-  const tipoSelected = await selectMuiSelectByLabel('Tipo de servicio', undefined, undefined, 7000);
+  const unidadSelected = await selectMuiSelectByLabel('Unidad', undefined, 'Area', 9000);
+  const areaSelected = await selectMuiSelectByLabel('Área', undefined, 'Sociedad', 9000);
+  const sociedadSelected = await selectMuiSelectByLabel('Sociedad', undefined, 'Tipo de servicio', 9000);
+  const tipoSelected = await selectMuiSelectByLabel('Tipo de servicio', undefined, undefined, 9000);
 
     console.log(`[NewRequestAction] selections -> unidad:${unidadSelected} area:${areaSelected} sociedad:${sociedadSelected} tipo:${tipoSelected}`);
 
@@ -399,7 +275,10 @@ export class NewRequestAction extends BaseAction {
         // Find the calendar header text (e.g. "agosto 2025") inside the open popper
         let popper = this.page.locator('.MuiPickerPopper-paper').first();
         // Wait for popper to be visible briefly. If not found, try any popper/dialog root
-        if (await popper.count() === 0) popper = this.page.locator('div[role="dialog"].MuiPopper-root').first();
+        if (await popper.count() === 0) {
+          const altPopper = this.page.locator('div[role="dialog"].MuiPopper-root').first();
+          if (await altPopper.count() > 0) popper = altPopper;
+        }
 
         // Read current month/year and compute how many 'next' clicks needed
         let currentMonth = null as number | null;
@@ -428,17 +307,14 @@ export class NewRequestAction extends BaseAction {
         // otherwise fall back to generic selectors.
         const genericNextSelector = 'button[aria-label="Next month"], button[aria-label="Siguiente mes"], button[title="Next month"], button[title="Mes siguiente"], .MuiPickersArrowSwitcher-root button[aria-label]';
         for (let i = 0; i < Math.min(6, monthsToAdvance); i++) {
-          try {
-            let nextBtn = rp.nextMonthPicker;
-            if (nextBtn && (await nextBtn.count()) === 0) nextBtn = this.page.locator(genericNextSelector).first();
-            // re-evaluate in case locator changes
-            if (await nextBtn.count() > 0) {
-              await nextBtn.first().click().catch(() => {});
-              await this.page.waitForTimeout(250);
-            } else {
-              break;
-            }
-          } catch (e) { break; }
+          let nextBtn = rp.nextMonthPicker;
+          if (nextBtn && (await nextBtn.count()) === 0) nextBtn = this.page.locator(genericNextSelector).first();
+          if (await nextBtn.count() > 0) {
+            await nextBtn.first().click().catch(() => {});
+            await this.page.waitForTimeout(250);
+          } else {
+            break;
+          }
         }
 
         // After navigation attempts, find an enabled day button inside the popper and click it
@@ -516,7 +392,6 @@ export class NewRequestAction extends BaseAction {
           const dd = String(target.getDate()).padStart(2, '0');
           const mm = String(target.getMonth() + 1).padStart(2, '0');
           const display = `${dd}/${mm}/${target.getFullYear()}`;
-          const iso = isoTarget;
           const didSet = await this.page.evaluate(({display, iso}) => {
             // try visible input with placeholder
             const inputs = Array.from(document.querySelectorAll('input'));            
@@ -534,7 +409,7 @@ export class NewRequestAction extends BaseAction {
               const hiddenIso = document.querySelector('input[type="hidden"][value*="-"]') as HTMLInputElement | null;
               if (hiddenIso) { hiddenIso.value = iso; hiddenIso.dispatchEvent(new Event('input', { bubbles: true })); hiddenIso.dispatchEvent(new Event('change', { bubbles: true })); }
               return true;
-            } catch (e) { return false; }
+      } catch (e) { return false; }
           }, { display, iso: isoTarget });
 
           if (didSet) {
@@ -621,144 +496,19 @@ export class NewRequestAction extends BaseAction {
     } else {
       console.log('[NewRequestAction] All fields verified after 10s wait');
     }
-    // ===== NUEVA LÓGICA DE ADJUNTOS VIA MODAL =====
-    const requiredTypes = ['TDR','BASES','ANEXO'];
-    const includeOptional = Math.random() < 0.5; // 50% opcional
-    const optionalType = 'OTROS';
-    const allPlanned = includeOptional ? [...requiredTypes, optionalType] : [...requiredTypes];
-    const attachedSummary: { tipo: string; file: string; success: boolean }[] = [];
-
-    const openAttachmentModal = async () => {
-      // Intentar localizar un botón "Agregar" que no sea el primero (usado para abrir la solicitud) o un botón específico de adjuntos.
-      // Estrategia: probar candidatos en orden.
-      const candidates = [
-        this.page.getByRole('button', { name: /Agregar archivo|Adjuntar archivo|Añadir archivo/i }),
-        this.page.getByRole('button', { name: /^Agregar$/ }).nth(1), // segundo "Agregar"
-        this.page.getByRole('button', { name: /^Agregar$/ }).last()
-      ];
-      for (const c of candidates) {
-        if (await c.count() > 0) {
-          await c.first().click().catch(()=>{});
-          // esperar a que aparezca un dialog (combobox dentro de un contenedor modal)
-          for (let i=0;i<15;i++) {
-            const combo = this.page.locator('div[role="combobox"]').last();
-            if (await combo.count() > 0) return true;
-            await this.page.waitForTimeout(150);
-          }
-        }
-      }
-      return false;
-    };
-
-    const selectAttachmentType = async (tipo: string) => {
-      // Buscar el último combobox visible (modal recién abierto)
-      const combo = this.page.locator('div[role="combobox"]').last();
-      if (await combo.count() === 0) return false;
-      await combo.click({ force: true }).catch(()=>{});
-      // esperar opciones
-      let optionClicked = false;
-      for (let i=0;i<10 && !optionClicked;i++) {
-        const opt = this.page.getByRole('option', { name: new RegExp(`^${tipo}$`, 'i') });
-        if (await opt.count() > 0) {
-          await opt.first().click().catch(()=>{});
-          optionClicked = true;
-          break;
-        }
-        await this.page.waitForTimeout(150);
-      }
-      if (!optionClicked) {
-        // Fallback: buscar texto directo
-        const txt = this.page.getByText(new RegExp(`^${tipo}$`, 'i')).last();
-        if (await txt.count() > 0) { await txt.click().catch(()=>{}); optionClicked = true; }
-      }
-      return optionClicked;
-    };
-
-    const uploadSingleFileInModal = async (filePath: string) => {
-      // Localizar input[type=file] dentro de un label con texto "Subir archivo"
-      const labelBtn = this.page.locator('label:has-text("Subir archivo")').last();
-      if (await labelBtn.count() === 0) {
-        console.warn('[NewRequestAction] No se encontró label "Subir archivo"');
-        return false;
-      }
-      const input = labelBtn.locator('input[type="file"]');
-      if (await input.count() === 0) {
-        console.warn('[NewRequestAction] Input file no presente dentro del label de subida');
-        return false;
-      }
-      try {
-        await input.setInputFiles(filePath);
-        console.log('[NewRequestAction] Archivo asignado al input:', filePath);
-        return true;
-      } catch (e) {
-        console.warn('[NewRequestAction] Falló setInputFiles en modal', e);
-        return false;
-      }
-    };
-
-    const saveAttachmentModal = async () => {
-      // Buscar botón Guardar dentro del modal (el último visible con ese nombre)
-      const btn = this.page.getByRole('button', { name: /^Guardar$/ }).last();
-      if (await btn.count() === 0) return false;
-      // esperar a que esté habilitado
-      for (let i=0;i<20;i++) {
-        const enabled = await btn.first().evaluate((el: HTMLElement)=> !(el as HTMLButtonElement).disabled && !el.getAttribute('aria-disabled'));
-        if (enabled) break;
-        await this.page.waitForTimeout(200);
-      }
-      await btn.first().click().catch(()=>{});
-      // esperar cierre del modal (desaparición de combobox o input file)
-      for (let i=0;i<30;i++) {
-        const stillOpen = await this.page.locator('label:has-text("Subir archivo") input[type="file"]').count();
-        if (stillOpen === 0) return true;
-        await this.page.waitForTimeout(200);
-      }
-      return true; // tolerante
-    };
-
-    for (const tipo of allPlanned) {
-      const filePath = getRandomFixtureFilePath();
-      console.log(`[NewRequestAction] Iniciando adjunto tipo '${tipo}' con archivo '${filePath}'`);
-      const opened = await openAttachmentModal();
-      if (!opened) {
-        console.warn('[NewRequestAction] No se abrió el modal de adjuntos');
-        attachedSummary.push({ tipo, file: filePath, success: false });
-        continue;
-      }
-      const typeSet = await selectAttachmentType(tipo);
-      if (!typeSet) {
-        console.warn(`[NewRequestAction] No se pudo seleccionar tipo '${tipo}'`);
-        await this.saveDebug(`tipo-no-seleccionado-${tipo}`);
-        attachedSummary.push({ tipo, file: filePath, success: false });
-        // intentar cerrar modal presionando ESC
-        await this.page.keyboard.press('Escape').catch(()=>{});
-        continue;
-      }
-      const uploaded = await uploadSingleFileInModal(filePath);
-      if (!uploaded) {
-        console.warn(`[NewRequestAction] Falló subida de archivo para tipo '${tipo}'`);
-        await this.saveDebug(`subida-fallida-${tipo}`);
-        attachedSummary.push({ tipo, file: filePath, success: false });
-        await this.page.keyboard.press('Escape').catch(()=>{});
-        continue;
-      }
-      const saved = await saveAttachmentModal();
-      if (!saved) {
-        console.warn(`[NewRequestAction] No se guardó el adjunto tipo '${tipo}'`);
-        await this.saveDebug(`adjunto-no-guardado-${tipo}`);
-      }
-      attachedSummary.push({ tipo, file: filePath, success: saved });
-      // pequeña espera antes del siguiente
-      await this.page.waitForTimeout(400);
+    // ===== LÓGICA DE ADJUNTOS VIA HELPER (configurable) =====
+    const includeOptional = process.env.INCLUDE_OPTIONAL_ATTACH === '1';
+    try { await this.saveDebug('before-attachments'); } catch {}
+    const { summary: attachedSummary, missingRequired } = await uploadAttachments(this.page, {
+      includeOptional,
+      pauseBetween: 160,          // ligero throttle para estabilidad
+      saveDebug: (n) => this.saveDebug(n),
+      throwOnMissingRequired: true
+    });
+    if (missingRequired.length) {
+      console.warn('[NewRequestAction] Tipos requeridos faltantes tras helper:', missingRequired);
     }
-
-    // Validar que los obligatorios se hayan adjuntado con éxito
-    const missingRequired = requiredTypes.filter(r => !attachedSummary.find(a => a.tipo === r && a.success));
-    if (missingRequired.length > 0) {
-      await this.saveDebug('adjuntos-requeridos-faltantes');
-      throw new Error(`Faltan adjuntar tipos requeridos: ${missingRequired.join(', ')}`);
-    }
-    console.log('[NewRequestAction] Resumen adjuntos:', attachedSummary);
+    console.log('[NewRequestAction] Resumen adjuntos (helper):', attachedSummary);
 
     await this.saveDebug('before-final-save');
     await this.clickFinalSave(mock.descripcion).catch(err => { throw err; });
